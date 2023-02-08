@@ -1,74 +1,55 @@
 #!/bin/bash
-#Basic CloudFlare API Script By Fixapc.net
-#Updates A Record With IPv4 Address
-#Updates AAAA Record With IPv6 Address
-#Updates Cloudflare.com DNS Records 
-#Youtube Channel: youtube.fixapc.net
-#Note this is mainly for servers who act as a router / gateway at the moment and whos public IP resides on their network interface. 
-#When i have more time i will update the script to automatically retrieve domains and have the IP be updated via Google.
 
-#!/bin/bash
-#User Specific Details here
-key=
-email=
-
-#Your Domain List Here
-domain=(
+# Array of domains to update
+domains=(
+your domains here
 )
 
-#Gets Your Ipv4 Global Address From The Previded Interface
-     ipv4=$(curl -s https://api.ipify.org | strings || curl -s ifconfig.me | strings)
+# Cloudflare API credentials
+auth_email="your cloudflare email here"
+auth_key="your global api key here"
 
-#Gets Your Ipv6 Global Address From The Previded Interface
-     ipv6=$(ifconfig | rg -i -A1 $ipv4 | tail -n1 | awk '{print $2}' | strings )
+# Get the current public IP address
+current_ip=$(curl -s https://ipv4.icanhazip.com)
 
-#Echo Current IP On Specified Interface
-     echo CURRENT IPv4 Address is $ipv4
-     echo CURRENT IPv6 Address is $ipv6
-#=====================START UPDATING CLOUDFLARE RECORDS=======================
-for i in "${!domain[@]}"
-do
-echo " "
-echo Attempting To Update ''${domain[i]}''s A Record To $ipv4
-echo Attempting To Update ''${domain[i]}''s AAAA Record To $ipv6
-echo " "
-#Get Zone ID
-     zoneid=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name="${domain[i]}"" \
-          -H "X-Auth-Email: "$email"" \
-          -H "X-Auth-Key: "$key"" \
-          -H "Content-Type: application/json" \
-             | json_pp | grep -E 'name|id' | sed -n 3p | awk '{print $3}' | tr -d [:punct:])
+# Loop through each domain in the array
+for domain in "${domains[@]}"; do
+  # Get the zone ID for the domain
+  zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${domain}" \
+    -H "X-Auth-Email: ${auth_email}" \
+    -H "X-Auth-Key: ${auth_key}" \
+    -H "Content-Type: application/json" \
+    | jq -r '.result[0].id')
 
-#Get A Record ID
-     arecid=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/"$zoneid"/dns_records/?type=A" \
-          -H "X-Auth-Email: "$email"" \
-          -H "X-Auth-Key: "$key"" \
-          -H "Content-Type: application/json" \
-          | json_pp | sed -n 8p | awk '{print $3}' | tr -d [:punct:])
+  # Check if the zone ID was found
+  if [ ! -z "$zone_id" ]; then
+    # Get the current DNS records for the domain
+    dns_records=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=A,AAAA&name=${domain}" \
+      -H "X-Auth-Email: ${auth_email}" \
+      -H "X-Auth-Key: ${auth_key}" \
+      -H "Content-Type: application/json")
 
-#Get AAAA Record ID
-     aaaarecid=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/"$zoneid"/dns_records/?type=AAAA" \
-          -H "X-Auth-Email: "$email"" \
-          -H "X-Auth-Key: "$key"" \
-          -H "Content-Type: application/json" \
-          | json_pp | sed -n 8p | awk '{print $3}' | tr -d [:punct:])
+    # Check if the A record exists
+    a_record_id=$(echo "$dns_records" | jq -r ".result[] | select(.type == \"A\") | .id")
+    if [ ! -z "$a_record_id" ]; then
+      # Update the A record
+      curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${a_record_id}" \
+        -H "X-Auth-Email: ${auth_email}" \
+        -H "X-Auth-Key: ${auth_key}" \
+        -H "Content-Type: application/json" \
+        --data "{\"type\":\"A\",\"name\":\"${domain}\",\"content\":\"${current_ip}\",\"ttl\":1,\"proxied\":false}"
+    fi
 
-#Update Domain1's A Record With Correct IPv4 Address
-     echo A Record Update Results For ${domain[i]}
-     curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/"$zoneid"/dns_records/"$arecid"" \
-          -H "X-Auth-Email: "$email"" \
-          -H "X-Auth-Key: "$key"" \
-          -H "Content-Type: application/json" \
-          --data '{"type":"A","name":"'${domain[i]}'","content":"'$ipv4'","ttl":3600,"proxied":false}' | json_pp | tr -d '""()[]{},' | column -t
-#Add a space
-echo
-#Update Domain1's AAAA Record With Correct IPv6 Address
-     echo AAAA Record Update Results For ${domain[i]}
-      curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/"$zoneid"/dns_records/"$aaaarecid"" \
-          -H "X-Auth-Email: "$email"" \
-          -H "X-Auth-Key: "$key"" \
-          -H "Content-Type: application/json" \
-          --data '{"type":"AAAA","name":"'${domain[i]}'","content":"'$ipv6'","ttl":3600,"proxied":false}' | json_pp | tr -d '""()[]{},' | column -t
-#Add a space
-echo
+    # Check if the AAAA record exists
+    aaaa_record_id=$(echo "$dns_records" | jq -r ".result[] | select(.type == \"AAAA\") | .id")
+    if [ ! -z "$aaaa_record_id" ]; then
+      # Update the AAAA record
+      curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${aaaa_record_id}" \
+        -H "X-Auth-Email: ${auth_email}" \
+        -H "X-Auth-Key: ${auth_key}" \
+        -H "Content-Type: application/json" \
+        --data "{\"type\":\"AAAA\",\"name\":\"${domain}\",\"content\":\"${current_ip}\",\"ttl\":1,\"proxied\":false}"
+    fi
+  fi
 done
+
